@@ -1,0 +1,199 @@
+<!-- templates/meme_hunter.html -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Meme 币狩猎仪表盘</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        body { max-width: 1200px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 1.5rem; }
+        .feed-list { list-style: none; padding: 0; max-height: 400px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--border-radius); }
+        .feed-list li { border-bottom: 1px solid var(--border); padding: 0.75rem; }
+        .feed-list li:last-child { border-bottom: none; }
+        .signal { background-color: var(--accent-bg); border-left: 4px solid var(--accent); padding-left: 1rem; margin-bottom: 0.5rem; }
+        .card h3 { margin-top: 0; }
+        .token-info strong { font-size: 1.1em; }
+        .token-details { font-size: 0.9em; color: var(--text-light); word-break: break-all; }
+        .log-level-INFO { color: var(--text); }
+        .log-level-ERROR { color: red; font-weight: bold; }
+        .log-level-DEBUG { color: grey; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <header>
+        <h1>🛸 Meme 币狩猎仪表盘 V2</h1>
+        <p>实时监控新币动态 (数据源: Telegram)</p>
+    </header>
+
+    {% raw %} <!-- 开始 Jinja2 的 raw 块 -->
+    <main>
+        <div class="grid">
+            <section class="card">
+                <h3>🔥 Alpha 信号雷达 (Strong Signals)</h3>
+                <ul class="feed-list">
+                    <li v-if="loading.signals">正在加载信号... <progress></progress></li>
+                    <li v-if="!loading.signals && !signals.length && !error.signals">暂无强信号...</li>
+                    <li v-for="item in signals" :key="item.id || item.contract" class="signal">
+                        <div class="token-info">
+                            <strong>{{ item.token_name || '未知代币' }} ({{ item.token_symbol || 'N/A' }})</strong>
+                        </div>
+                        <div class="token-details">
+                            合约: {{ item.contract ? item.contract.substring(0,6)+'...'+item.contract.substring(item.contract.length-4) : 'N/A' }} <br>
+                            来源: {{ item.source_channel || 'N/A' }} | 热度: {{ item.social_mentions || 0 }}<br>
+                            时间: {{ formatTime(item.timestamp) }} <br>
+                            <template v-if="item.links && item.links.length">
+                                链接: <a v-for="(link, idx) in item.links" :key="idx" :href="link" target="_blank" rel="noopener noreferrer">{{ getLinkDomain(link) }}</a>
+                            </template>
+                        </div>
+                    </li>
+                    <li v-if="error.signals" style="color: red;">无法加载信号: {{ error.signals }}</li>
+                </ul>
+            </section>
+            <section class="card">
+                <h3>📜 机器人日志 (Bot Logs)</h3>
+                <ul class="feed-list">
+                    <li v-if="loading.logs">等待日志... <progress></progress></li>
+                    <li v-if="!loading.logs && !logs.length && !error.logs">暂无日志...</li>
+                    <li v-for="log in logs" :key="log.id">
+                        <small>{{ formatTime(log.timestamp) }} [<span :class="'log-level-' + log.level">{{ log.level }}</span>]</small><br>
+                        {{ log.message }}
+                    </li>
+                    <li v-if="error.logs" style="color: red;">无法加载日志: {{ error.logs }}</li>
+                </ul>
+            </section>
+        </div>
+
+        <section class="card" style="margin-top: 1.5rem;">
+            <h3>🛰️ 新币实时流 (Live Feed)</h3>
+            <ul class="feed-list">
+                <li v-if="loading.feed">正在扫描新币... <progress></progress></li>
+                <li v-if="!loading.feed && !feed.length && !error.feed">暂无新币...</li>
+                <li v-for="item in feed" :key="item.id || item.contract">
+                    <div class="token-info">
+                        <strong>{{ item.token_name || '新币' }} ({{ item.token_symbol || 'N/A' }})</strong>
+                    </div>
+                    <div class="token-details">
+                        合约: {{ item.contract ? item.contract.substring(0,6)+'...'+item.contract.substring(item.contract.length-4) : '合约未知' }} <br>
+                        链: {{ item.chain_id || 'N/A' }} | DEX: {{ item.dex_id || 'N/A' }} <br>
+                        来源: {{ item.source_channel || 'N/A' }} | 时间: {{ formatTime(item.timestamp) }} <br>
+                        <template v-if="item.links && item.links.length">
+                            链接: <a v-for="(link, idx) in item.links" :key="idx" :href="link" target="_blank" rel="noopener noreferrer">{{ getLinkDomain(link) }} </a>
+                        </template>
+                    </div>
+                </li>
+                <li v-if="error.feed" style="color: red;">无法加载新币流: {{ error.feed }}</li>
+            </ul>
+        </section>
+    </main>
+    {% endraw %} <!-- 结束 Jinja2 的 raw 块 -->
+</div>
+
+<script>
+    const { createApp, ref, onMounted, reactive } = Vue
+
+    createApp({
+        setup() {
+            const apiBaseUrl = ref('{{ api_base_url }}'); // 从 Flask 传递, 通常为空字符串或应用子路径
+
+            const feed = ref([]);
+            const signals = ref([]);
+            const logs = ref([]);
+            
+            const error = reactive({
+                feed: null,
+                signals: null,
+                logs: null
+            });
+            const loading = reactive({
+                feed: true,
+                signals: true,
+                logs: true
+            });
+
+            const fetchData = async () => {
+                const endpoints = {
+                    feed: `${apiBaseUrl.value}/api/v2/feed`,
+                    signals: `${apiBaseUrl.value}/api/v2/signals`,
+                    logs: `${apiBaseUrl.value}/api/v2/logs`
+                };
+
+                const fetchEndpoint = async (key) => {
+                    loading[key] = true;
+                    error[key] = null;
+                    try {
+                        const response = await fetch(endpoints[key]);
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        const data = await response.json();
+                        if (key === 'feed') feed.value = data;
+                        if (key === 'signals') signals.value = data;
+                        if (key === 'logs') logs.value = data;
+                    } catch (e) {
+                        console.error(`Failed to fetch ${key}`, e);
+                        error[key] = e.message;
+                    } finally {
+                        loading[key] = false;
+                    }
+                };
+
+                await Promise.all([
+                    fetchEndpoint('feed'),
+                    fetchEndpoint('signals'),
+                    fetchEndpoint('logs')
+                ]);
+            };
+
+            const formatTime = (timestamp) => {
+                if (!timestamp) return 'N/A';
+                // 尝试处理多种可能的 UTC 格式
+                let dateStr = timestamp.replace(' ', 'T');
+                if (!dateStr.endsWith('Z') && !dateStr.includes('+') && !dateStr.includes('-')) {
+                    // 如果时间戳不含时区信息，则假定为UTC并添加'Z'
+                    dateStr += 'Z';
+                }
+                try {
+                    return new Date(dateStr).toLocaleString();
+                } catch (e) {
+                    console.warn("Could not parse date:", timestamp, e);
+                    return timestamp; // 解析失败则返回原始值
+                }
+            };
+
+            const getLinkDomain = (urlString) => {
+                try {
+                    const url = new URL(urlString);
+                    let domain = url.hostname.replace('www.', '');
+                    if (domain === 't.me') return 'Telegram';
+                    if (domain === 'twitter.com' || domain === 'x.com') return 'X/Twitter';
+                    if (domain === 'dexscreener.com') return 'DexScreener';
+                    if (domain === 'poocoin.app') return 'PooCoin';
+                    return domain.split('.')[0]; // 简化域名显示
+                } catch (e) {
+                    return 'Link';
+                }
+            };
+
+            onMounted(() => {
+                fetchData();
+                setInterval(fetchData, 20000); // 每 20 秒刷新一次
+            });
+
+            return {
+                feed,
+                signals,
+                logs,
+                error,
+                loading,
+                formatTime,
+                getLinkDomain
+            };
+        }
+    }).mount('#app')
+</script>
+</body>
+</html>

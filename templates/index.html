@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>AI 比特币交易机器人仪表盘 (增强版)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
+    <!-- 引入 Chart.js 库 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { max-width: 960px; margin: 2rem auto; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; }
+        .card { border: 1px solid var(--border); padding: 1.5rem; border-radius: var(--border-radius); }
+        .up { color: var(--accent); }
+        .down { color: #d33; }
+        .status-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 8px; }
+        .success { background-color: var(--accent); }
+        .error { background-color: #d33; }
+        #last-updated { color: var(--secondary-text); font-size: 0.9rem; margin-top: 1rem; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>📈 AI 比特币交易机器人仪表盘 (增强版)</h1>
+        <p>域名: <a href="https://alexkyo.us">alexkyo.us</a> | 数据源: Kraken</p>
+    </header>
+
+    <main>
+        <div class="grid">
+            <div class="card">
+                <h3>实时预测</h3>
+                {% if data.status == 'success' %}
+                    <p><span class="status-dot success"></span>API 状态: <strong>运行正常</strong></p>
+                    <p>当前 BTC/USD 价格: <strong>${{ "%.2f"|format(data.current_btc_price_usd) }}</strong></p>
+                    <p>
+                        模型预测明日趋势: 
+                        {% if data.predicted_trend == 'UP' %}
+                            <strong class="up">▲ 上涨 (UP)</strong>
+                        {% else %}
+                            <strong class="down">▼ 下跌/横盘 (DOWN/STAY)</strong>
+                        {% endif %}
+                    </p>
+                    <p>模型置信度: <strong>{{ "%.2f"|format(data.confidence * 100) }}%</strong></p>
+                {% else %}
+                    <p><span class="status-dot error"></span>API 状态: <strong>服务异常</strong></p>
+                    <p>错误信息: <mark>{{ data.message }}</mark></p>
+                {% endif %}
+            </div>
+            
+            <div class="card">
+                <h3>系统状态</h3>
+                <p><strong>自动刷新:</strong> <span id="countdown">60</span> 秒后</p>
+                <p><strong>最后更新于:</strong> <span id="last-updated-time">{{ last_updated }}</span></p>
+                <details>
+                    <summary>原始 API 响应</summary>
+                    <pre><code>{{ data | tojson(indent=2) }}</code></pre>
+                </details>
+            </div>
+        </div>
+
+        {% if chart_data %}
+        <div class="card" style="margin-top: 1.5rem;">
+            <h3>最近 90 天价格与指标</h3>
+            <canvas id="priceChart"></canvas>
+        </div>
+        {% endif %}
+
+    </main>
+
+    <footer>
+        <p>警告：所有预测仅供参考，不构成投资建议。加密货币市场风险极高。</p>
+    </footer>
+
+    <script>
+        // --- 自动刷新倒计时 ---
+        let countdown = 60;
+        const countdownElement = document.getElementById('countdown');
+        const countdownInterval = setInterval(() => {
+            countdown--;
+            if (countdownElement) {
+                countdownElement.textContent = countdown;
+            }
+            if (countdown <= 0) {
+                clearInterval(countdownInterval);
+                window.location.reload();
+            }
+        }, 1000);
+
+        // --- Chart.js 绘图逻辑 ---
+        const chartData = {{ chart_data | tojson | safe }};
+        if (chartData && Object.keys(chartData).length > 0) {
+            const ctx = document.getElementById('priceChart').getContext('2d');
+            const priceChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: chartData.labels,
+                    datasets: [
+                        {
+                            label: '收盘价 (Close)',
+                            data: chartData.close_prices,
+                            borderColor: 'rgb(54, 162, 235)',
+                            backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.1,
+                            fill: true
+                        },
+                        {
+                            label: '7日 EMA',
+                            data: chartData.ema7,
+                            borderColor: 'rgb(255, 159, 64)',
+                            borderWidth: 1.5,
+                            pointRadius: 0 // 不显示数据点，让线条更平滑
+                        },
+                        {
+                            label: '30日 EMA',
+                            data: chartData.ema30,
+                            borderColor: 'rgb(255, 99, 132)',
+                            borderWidth: 1.5,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        title: {
+                            display: true,
+                            text: 'BTC/USD 价格走势'
+                        }
+                    },
+                    scales: {
+                        y: {
+                            ticks: {
+                                callback: function(value, index, values) {
+                                    return '$' + value.toLocaleString();
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
